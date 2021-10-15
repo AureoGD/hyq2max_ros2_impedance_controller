@@ -1,0 +1,10 @@
+<library path="hyq2max_ros2_impedance_controller">
+  <class name="hyq2max_ros2_impedance_controller/ImpedanceControl"
+         type="hyq2max_ros2_impedance_controller::ImpedanceControl"
+         base_class_type="controller_interface::ControllerInterface">
+
+    <description>
+      impedance controller for HyQ2Max
+    </description>
+  </class>
+</library>
