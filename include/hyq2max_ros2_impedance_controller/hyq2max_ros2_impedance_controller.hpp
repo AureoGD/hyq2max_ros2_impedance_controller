@@ -45,7 +45,8 @@ namespace hyq2max_ros2_impedance_controller
         controller_interface::InterfaceConfiguration state_interface_configuration() const override;
 
         HYQ2MAX_ROS2_IMPEDANCE_CONTROLLER_PUBLIC
-        controller_interface::return_type update() override;
+        controller_interface::return_type update(
+        const rclcpp::Time & time, const rclcpp::Duration & period) override;
 
         HYQ2MAX_ROS2_IMPEDANCE_CONTROLLER_PUBLIC
         CallbackReturn on_init() override;
@@ -86,17 +87,24 @@ namespace hyq2max_ros2_impedance_controller
         std::vector<std::string> command_interface_types_;
         std::vector<std::string> state_interface_types_;
 
-        const std::vector<std::string> allowed_interface_types_ = {
+        const std::vector<std::string> allowed_state_interface_types_ = {
         hardware_interface::HW_IF_POSITION,
         hardware_interface::HW_IF_VELOCITY,
         hardware_interface::HW_IF_EFFORT,
-        };      
+        };
+
+        const std::vector<std::string> allowed_command_interface_types_ = {
+        hardware_interface::HW_IF_EFFORT,
+        };    
        
         template <typename T>
         using InterfaceReferences = std::vector<std::vector<std::reference_wrapper<T>>>;
 
         InterfaceReferences<hardware_interface::LoanedCommandInterface> joint_command_interface_;
         InterfaceReferences<hardware_interface::LoanedStateInterface> joint_state_interface_;
+        // std::vector<std::reference_wrapper<hardware_interface::LoanedCommandInterface>> test_interface;
+
+        // std::vector<std::vector<std::reference_wrapper<hardware_interface::LoanedCommandInterface>>> joint_command_interface_;
     
         rclcpp::Subscription<CmdType>::SharedPtr joints_reference_subscriber_ = nullptr;
     
