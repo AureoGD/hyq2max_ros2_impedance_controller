@@ -59,9 +59,7 @@ namespace hyq2max_ros2_impedance_controller
 
         HYQ2MAX_ROS2_IMPEDANCE_CONTROLLER_PUBLIC
         CallbackReturn on_deactivate(const rclcpp_lifecycle::State & previous_state) override;
-
-
-       
+      
     private:
 
         std::vector<control_toolbox::Pid> pid_controller;
@@ -86,6 +84,9 @@ namespace hyq2max_ros2_impedance_controller
         std::vector<std::string> joint_names_;
         std::vector<std::string> command_interface_types_;
         std::vector<std::string> state_interface_types_;
+
+        std::vector<double> Kp_gains;
+        std::vector<double> Kd_gains;
 
         const std::vector<std::string> allowed_state_interface_types_ = {
         hardware_interface::HW_IF_POSITION,

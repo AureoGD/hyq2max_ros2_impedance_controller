@@ -23,6 +23,7 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 
+#include "controller_interface/helpers.hpp"
 // #include "hardware_interface/loaned_command_interface.hpp"
 
 namespace hyq2max_ros2_impedance_controller
@@ -42,8 +43,14 @@ namespace hyq2max_ros2_impedance_controller
       auto_declare<std::vector<std::string>>("joints", joint_names_);
       auto_declare<std::vector<std::string>>("command_interfaces", command_interface_types_);
       auto_declare<std::vector<std::string>>("state_interfaces", state_interface_types_);
-      auto_declare<double>("joint_HAA_Kp", 100);
-      auto_declare<double>("joint_HAA_Kd", 1);
+
+      auto_declare<double>("joint_impedance_controller_gains.HAA_Kp", 100.0);
+      auto_declare<double>("joint_impedance_controller_gains.HAA_Kd", 10.0);
+      auto_declare<double>("joint_impedance_controller_gains.HFE_Kp", 100.0);
+      auto_declare<double>("joint_impedance_controller_gains.HFE_Kd", 10.0);
+      auto_declare<double>("joint_impedance_controller_gains.KFE_Kp", 100.0);
+      auto_declare<double>("joint_impedance_controller_gains.KFE_Kd", 10.0);
+      auto_declare<std::vector<double>>("joints_references", {});
     }
     catch (const std::exception & e)
     {
@@ -126,7 +133,6 @@ namespace hyq2max_ros2_impedance_controller
     
     joint_command_interface_.resize(allowed_command_interface_types_.size());
 
-
     // State interface checking
     state_interface_types_ = node_->get_parameter("state_interfaces").as_string_array();
 
@@ -156,6 +162,8 @@ namespace hyq2max_ros2_impedance_controller
       logger, "Command interfaces are [%s] and and state interfaces are [%s].",
       get_interface_list(command_interface_types_).c_str(),
       get_interface_list(state_interface_types_).c_str());
+    
+    // Create the topic where the joints reference are published
 
     auto callback = [this](const std::shared_ptr<CmdType> msg) -> void {
       for(int index = 0; index < 12; ++index)
@@ -164,57 +172,41 @@ namespace hyq2max_ros2_impedance_controller
         qdr[index] = msg->qd_r[index];
       }
     };
-
+    
     joints_reference_subscriber_= node_->create_subscription<CmdType>(
     "~/commands", rclcpp::SystemDefaultsQoS(), callback);
 
-    RCLCPP_INFO(logger, "Joint reference substriber created");
+    RCLCPP_INFO(logger, "Joint reference subscriber created");
 
-    for (int i = 0; i < 12; i++){
-      pid_controller[i].initPid(300, 0, 10, 10000, -10000);
-      qdr[i] = 0;  
-    }
+    // Gains update
+
+    Kp_gains.push_back(node_->get_parameter("joint_impedance_controller_gains.HAA_Kp").get_value<double>());
+    Kp_gains.push_back(node_->get_parameter("joint_impedance_controller_gains.HFE_Kp").get_value<double>());
+    Kp_gains.push_back(node_->get_parameter("joint_impedance_controller_gains.KFE_Kp").get_value<double>());
+
+    Kd_gains.push_back(node_->get_parameter("joint_impedance_controller_gains.HAA_Kd").get_value<double>());
+    Kd_gains.push_back(node_->get_parameter("joint_impedance_controller_gains.HFE_Kd").get_value<double>());
+    Kd_gains.push_back(node_->get_parameter("joint_impedance_controller_gains.KFE_Kd").get_value<double>());
+
+    // Initial joits reference
+
+    std::vector<double> joits_references = node_->get_parameter("joints_references").get_value<std::vector<double>>();
+
+    // Configure the PD controntroller and joints references
+    int k = 0;
+    for (int i = 0; i<4; i++)
+    {
+      for(int j = 0; j<3; j++)
+      {
+        pid_controller[k].initPid(Kd_gains[j], 0, Kd_gains[j], 10000, -10000);
+        qr[k] = joits_references[k];
+        qdr[k] = 0;
+        k++; 
+      }
+    }    
     
     RCLCPP_INFO(logger, "Impedance controller gains update");
-
-    qr[0] = -0.05;
-    qr[1] = 0.65;
-    qr[2] = -1.18;
-    qr[3] = -0.05;
-    qr[4] =  0.65;
-    qr[5] = -1.18;
-    qr[6] = -0.05;
-    qr[7] = -0.65;
-    qr[8] = 1.18;
-    qr[9] = -0.05;
-    qr[10] = -0.65;
-    qr[11] = 1.18;
-
-  RCLCPP_INFO(logger, "%f, %f, %f", qr[0], qr[1], qr[2]);
-
     return CallbackReturn::SUCCESS;
-  }
-
-  // Fill ordered_interfaces with references to the matching interfaces
-  // in the same order as in joint_names
-  template <typename T>
-  bool get_ordered_interfaces(
-    std::vector<T> & unordered_interfaces, const std::vector<std::string> & joint_names,
-    const std::string & interface_type, std::vector<std::reference_wrapper<T>> & ordered_interfaces)
-  {
-    for (const auto & joint_name : joint_names)
-    {
-      for (auto & command_interface : unordered_interfaces)
-      {
-        if (
-          (command_interface.get_name() == joint_name) &&
-          (command_interface.get_interface_name() == interface_type))
-        {
-          ordered_interfaces.emplace_back(std::ref(command_interface));
-        }
-      }
-    }
-    return joint_names.size() == ordered_interfaces.size();
   }
 
   CallbackReturn ImpedanceControl::on_activate(const rclcpp_lifecycle::State &)
@@ -229,7 +221,7 @@ namespace hyq2max_ros2_impedance_controller
       auto it =
       std::find(allowed_command_interface_types_.begin(), allowed_command_interface_types_.end(), interface);
       auto index = std::distance(allowed_command_interface_types_.begin(), it);   
-      if (!get_ordered_interfaces(
+      if (!controller_interface::get_ordered_interfaces(
       command_interfaces_, joint_names_, interface, joint_command_interface_[index]))
       {
         RCLCPP_ERROR(
@@ -244,7 +236,7 @@ namespace hyq2max_ros2_impedance_controller
       auto it =
       std::find(allowed_state_interface_types_.begin(), allowed_state_interface_types_.end(), interface);
       auto index = std::distance(allowed_state_interface_types_.begin(), it);
-      if (!get_ordered_interfaces(
+      if (!controller_interface::get_ordered_interfaces(
         state_interfaces_, joint_names_, interface, joint_state_interface_[index]))
         {
           RCLCPP_ERROR(
@@ -265,7 +257,7 @@ namespace hyq2max_ros2_impedance_controller
     for (auto index = 0ul; index < joint_names_.size(); ++index)
     {
       joint_command_interface_[0][index].get().set_value(
-      joint_command_interface_[0][index].get().get_value());
+      joint_command_interface_[2][index].get().get_value());
     }
 
     for (auto index = 0ul; index < allowed_state_interface_types_.size(); ++index)
@@ -307,9 +299,9 @@ namespace hyq2max_ros2_impedance_controller
       qd_e[index] = qdr[index] - q[index];
 
       commanded_effort[index] = pid_controller[index].computeCommand(q_e[index], qd_e[index], dt);
-      // joint_command_interface_[0][index].get().set_value(1000);
+      joint_command_interface_[0][index].get().set_value(commanded_effort[index]);
       
-      // effort[index] = joint_state_interface_[2][index].get().get_value(commanded_effort[index]);
+       effort[index] = joint_state_interface_[2][index].get().get_value();
     }
     // RCLCPP_INFO(logger,"%f", joint_state_interface_[0][0].get().get_value());
 
