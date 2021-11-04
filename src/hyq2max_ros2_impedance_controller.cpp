@@ -23,13 +23,12 @@
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 
+#include "angles/angles.h"
+
 #include "controller_interface/helpers.hpp"
-// #include "hardware_interface/loaned_command_interface.hpp"
 
 namespace hyq2max_ros2_impedance_controller
 {
-
-  // using hardware_interface::LoanedCommandInterface;
 
   ImpedanceControl::ImpedanceControl()
   : controller_interface::ControllerInterface(), joint_names_({})
@@ -51,6 +50,8 @@ namespace hyq2max_ros2_impedance_controller
       auto_declare<double>("joint_impedance_controller_gains.KFE_Kp", 100.0);
       auto_declare<double>("joint_impedance_controller_gains.KFE_Kd", 10.0);
       auto_declare<std::vector<double>>("joints_references", {});
+
+      auto_declare<double>("robot_states_feedabck_rate", 100.0);
     }
     catch (const std::exception & e)
     {
@@ -165,7 +166,7 @@ namespace hyq2max_ros2_impedance_controller
     
     // Create the topic where the joints reference are published
 
-    auto callback = [this](const std::shared_ptr<CmdType> msg) -> void {
+    auto callback_refs = [this](const std::shared_ptr<CmdType> msg) -> void {
       for(int index = 0; index < 12; ++index)
       {
         qr[index] = msg->q_r[index];
@@ -174,9 +175,50 @@ namespace hyq2max_ros2_impedance_controller
     };
     
     joints_reference_subscriber_= node_->create_subscription<CmdType>(
-    "~/commands", rclcpp::SystemDefaultsQoS(), callback);
+    "~/commands", rclcpp::SystemDefaultsQoS(), callback_refs);
 
     RCLCPP_INFO(logger, "Joint reference subscriber created");
+
+    auto callback_odom = [this](const std::shared_ptr<OdometryMsg> msg) -> void {
+      b[0] = msg-> pose.pose.position.x;
+      b[1] = msg-> pose.pose.position.y;
+      b[2] = msg-> pose.pose.position.z;
+      
+      Q[0] = msg-> pose.pose.orientation.x;
+      Q[1] = msg-> pose.pose.orientation.y;
+      Q[2] = msg-> pose.pose.orientation.z;
+      Q[3] = msg-> pose.pose.orientation.w;
+
+      bd[0] = msg->twist.twist.linear.x;
+      bd[1] = msg->twist.twist.linear.y;
+      bd[2] = msg->twist.twist.linear.z;
+
+      omega[0] = msg->twist.twist.angular.x;
+      omega[1] = msg->twist.twist.angular.y;
+      omega[2] = msg->twist.twist.angular.z;
+    };
+
+    odometry_subscriber_ = node_->create_subscription<OdometryMsg>(
+    "/hyq2max/odom", rclcpp::SensorDataQoS(), callback_odom);
+
+    // States publisher
+
+    const double state_publish_rate = node_->get_parameter("robot_states_feedabck_rate").get_value<double>();
+    
+    RCLCPP_INFO(logger, "Robot states will be published at %.2f Hz.", state_publish_rate);
+    if (state_publish_rate > 0.0)
+    {
+      state_publisher_period_ = rclcpp::Duration::from_seconds(1.0 / state_publish_rate);
+    }
+    else
+    {
+      state_publisher_period_ = rclcpp::Duration::from_seconds(0.0);
+    }
+
+    publisher_ = node_->create_publisher<RobotStatesMsg>("~/robot_states", rclcpp::SystemDefaultsQoS());
+    state_publisher_ = std::make_unique<StatePublisher>(publisher_);
+
+    last_state_publish_time_ = node_->now();
 
     // Gains update
 
@@ -292,21 +334,63 @@ namespace hyq2max_ros2_impedance_controller
       // get the joint velocity
       qd[index] = joint_state_interface_[1][index].get().get_value(); 
 
-      // RCLCPP_INFO(logger,"%ld,%f, %f", index, q[index],qd[index]);
-
       // calcule the position and velocity errors
-      q_e[index] = qr[index] - q[index];
-      qd_e[index] = qdr[index] - q[index];
 
-      commanded_effort[index] = pid_controller[index].computeCommand(q_e[index], qd_e[index], dt);
+      q_e[index] = qr[index] - q[index];
+      qd_e[index] = qdr[index] - qd[index];
+
+      // commanded_effort[index] = pid_controller[index].computeCommand(q_e[index], qd_e[index], dt);
+      
+      commanded_effort[index] = 300.0 * q_e[index] + 20.0 * qd_e[index];
       joint_command_interface_[0][index].get().set_value(commanded_effort[index]);
       
        effort[index] = joint_state_interface_[2][index].get().get_value();
     }
-    // RCLCPP_INFO(logger,"%f", joint_state_interface_[0][0].get().get_value());
+    publish_state();
 
     return controller_interface::return_type::OK;
-  }     
+  }
+
+  void ImpedanceControl::publish_state()
+  {
+    if (state_publisher_period_.seconds() <= 0.0)
+    {
+      return;
+    }
+
+    if (node_->now() < (last_state_publish_time_ + state_publisher_period_))
+    {
+      return;
+    }
+
+    if (state_publisher_ && state_publisher_->trylock())
+    {
+      last_state_publish_time_ = node_->now();        
+
+      for(int index = 0; index <= 11; index++)
+      {
+        state_publisher_->msg_.q[index] = q[index];
+        state_publisher_->msg_.qd[index] = qd[index];
+        state_publisher_->msg_.tau[index] = effort[index];
+      }
+
+      for(int index = 0; index <= 2; index++)
+      {
+        state_publisher_->msg_.b[index] = b[index];
+        state_publisher_->msg_.bd[index] = bd[index];
+        state_publisher_->msg_.omega[index] = omega[index];
+      }  
+
+       for(int index = 0; index <= 3; index++)
+      {
+        state_publisher_->msg_.orientation[index] = Q[index];
+      } 
+
+
+      state_publisher_->unlockAndPublish();
+    }
+  }
+
 } //End namespace hyq2max_ros2_impedance_controller
 
 #include <pluginlib/class_list_macros.hpp>

@@ -35,6 +35,7 @@ target_include_directories( ${PROJECT_NAME} PRIVATE include
   rcutils
   realtime_tools
   std_msgs
+  nav_msgs
   hyq2max_interfaces
   control_toolbox
 )

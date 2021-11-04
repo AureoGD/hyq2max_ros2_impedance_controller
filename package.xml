@@ -17,6 +17,7 @@
   <depend>realtime_tools</depend>
   <depend>std_msgs</depend>
   <depend>hyq2max_interfaces</depend>
+  <depend>nav_msgs</depend>
            
   <depend>control_toolbox</depend>
 

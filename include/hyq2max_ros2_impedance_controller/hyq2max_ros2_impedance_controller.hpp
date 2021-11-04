@@ -10,6 +10,7 @@
 
 #include "hyq2max_ros2_impedance_controller/visibility_control.h"
 #include "hyq2max_interfaces/msg/joints_references.hpp"
+#include "hyq2max_interfaces/msg/robot_states.hpp"
 #include "control_toolbox/pid.hpp"
 
 #include "controller_interface/controller_interface.hpp"
@@ -26,10 +27,16 @@
 #include "realtime_tools/realtime_publisher.h"
 #include "realtime_tools/realtime_server_goal_handle.h"
 
+#include "nav_msgs/msg/odometry.hpp"
+
+using namespace std::chrono_literals;
+
 namespace hyq2max_ros2_impedance_controller
 {
     using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
     using CmdType = hyq2max_interfaces::msg::JointsReferences;
+    using OdometryMsg = nav_msgs::msg::Odometry;
+    using RobotStatesMsg = hyq2max_interfaces::msg::RobotStates;
 
     class ImpedanceControl : public controller_interface::ControllerInterface
     {
@@ -75,9 +82,18 @@ namespace hyq2max_ros2_impedance_controller
         double qr[12];
         double qdr[12];
 
+        // Base position
+        double b[3]; 
+        // Base velocity
+        double bd[3];
+        // Base orientation
+        double Q[4];
+        // Base angular velocity
+        double omega[3];
+
         // this term is need to define the computeCommand method,
         // but is not used, as the integral term is 0
-        uint64_t dt = 1;  
+        uint64_t dt = 1; 
 
     protected:
 
@@ -108,7 +124,17 @@ namespace hyq2max_ros2_impedance_controller
         // std::vector<std::vector<std::reference_wrapper<hardware_interface::LoanedCommandInterface>>> joint_command_interface_;
     
         rclcpp::Subscription<CmdType>::SharedPtr joints_reference_subscriber_ = nullptr;
-    
+        rclcpp::Subscription<OdometryMsg>::SharedPtr odometry_subscriber_ = nullptr;
+
+        using StatePublisher = realtime_tools::RealtimePublisher<RobotStatesMsg>;
+        using StatePublisherPtr = std::unique_ptr<StatePublisher>;
+        rclcpp::Publisher<RobotStatesMsg>::SharedPtr publisher_;
+        StatePublisherPtr state_publisher_;
+
+        rclcpp::Duration state_publisher_period_ = rclcpp::Duration(20ms);
+        rclcpp::Time last_state_publish_time_;
+
+        void publish_state();
     };
 } //namespace hyq2max
 
